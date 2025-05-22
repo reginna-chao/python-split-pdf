@@ -1,12 +1,22 @@
 import fitz  # PyMuPDF
 import sys
+import os
+from dotenv import load_dotenv
 
-def split_pdf_with_image_rendering(input_path, output_path, dpi=300):
+def mm_to_pt(mm):
+    return mm / 25.4 * 72  # mm → point
+
+def split_pdf_with_image_rendering_and_bleed(input_path, output_path, dpi=300):
+    load_dotenv()
+    bleed_mm = float(os.getenv("PRINT_BLEED", "0"))
+    bleed_pt = mm_to_pt(bleed_mm)
+
     doc = fitz.open(input_path)
     new_doc = fitz.open()
 
-    a4_width_pt = 210 / 25.4 * 72  # 595.28 pt
-    scale = dpi / 72  # 渲染解析度轉換
+    a4_width_pt = mm_to_pt(210)
+    a4_height_pt = mm_to_pt(297)
+    scale = dpi / 72
 
     for page_index in range(len(doc)):
         page = doc[page_index]
@@ -14,26 +24,36 @@ def split_pdf_with_image_rendering(input_path, output_path, dpi=300):
         full_height = rect.height
 
         for i in range(3):
+            # 原始切割區域
             x0 = i * a4_width_pt
             x1 = x0 + a4_width_pt
-            clip = fitz.Rect(x0, 0, x1, full_height)
+            y0 = 0
+            y1 = full_height
 
-            # 將 clip 區塊渲染成高解析度圖片
+            # 移除出血範圍
+            clip = fitz.Rect(
+                x0 + bleed_pt,
+                y0 + bleed_pt,
+                x1 - bleed_pt,
+                y1 - bleed_pt
+            )
+
+            # 將 clip 區塊渲染成高解析度圖像
             mat = fitz.Matrix(scale, scale)
             pix = page.get_pixmap(matrix=mat, clip=clip, alpha=False)
 
-            # 計算對應的實際尺寸
-            width_pt = x1 - x0
-            height_pt = full_height
+            # 新頁尺寸為 clip 寬高
+            width_pt = clip.width
+            height_pt = clip.height
 
             new_page = new_doc.new_page(width=width_pt, height=height_pt)
             new_page.insert_image(new_page.rect, pixmap=pix)
 
     new_doc.save(output_path)
-    print(f"✅ 已輸出為圖像 PDF，保證可列印：{output_path}")
+    print(f"✅ 已輸出 PDF（裁掉 {bleed_mm}mm 出血）：{output_path}")
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("用法: python split_pdf_image_render.py input.pdf output.pdf")
+        print("用法: python split_pdf_with_bleed.py input.pdf output.pdf")
     else:
-        split_pdf_with_image_rendering(sys.argv[1], sys.argv[2])
+        split_pdf_with_image_rendering_and_bleed(sys.argv[1], sys.argv[2])
