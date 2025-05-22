@@ -32,7 +32,13 @@ def split_pdf_with_bleed_and_order(input_path, output_path, dpi=300):
     doc = fitz.open(input_path)
     temp_pages = []
     a4_width_pt = mm_to_pt(210)
-    scale = dpi / 72
+    
+    # 根據壓縮設定調整scale
+    if compress_pdf and output_dpi != dpi:
+        scale = output_dpi / 72
+        print(f"🔧 使用壓縮DPI: {output_dpi}")
+    else:
+        scale = dpi / 72
 
     print(f"\n📄 原始PDF: {len(doc)} 頁")
 
@@ -129,14 +135,62 @@ def split_pdf_with_bleed_and_order(input_path, output_path, dpi=300):
 
     # 儲存PDF（帶壓縮選項）
     if compress_pdf:
-        # 啟用所有壓縮選項
-        new_doc.save(output_path, 
+        # 先儲存到臨時檔案，然後進行進階壓縮
+        temp_output = output_path + ".temp"
+        new_doc.save(temp_output, 
                     garbage=4,      # 清理未使用物件
                     deflate=True,   # 啟用deflate壓縮
                     clean=True)     # 清理和優化
-        print(f"📦 已套用PDF壓縮")
+        new_doc.close()
+        
+        # 重新開啟進行進階壓縮
+        print(f"📦 正在進行PDF壓縮...")
+        compressed_doc = fitz.open(temp_output)
+        
+        # 進階壓縮：重新處理每一頁
+        final_doc = fitz.open()
+        for page_num in range(len(compressed_doc)):
+            page = compressed_doc[page_num]
+            
+            # 如果啟用圖片壓縮，重新渲染頁面
+            if compress_images:
+                # 用較低DPI重新渲染
+                compress_scale = output_dpi / 72
+                mat = fitz.Matrix(compress_scale, compress_scale)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                
+                # 轉JPEG壓縮
+                img_data = pix.tobytes("jpeg", jpg_quality=image_quality)
+                
+                # 建立新頁面並插入壓縮圖片
+                new_page = final_doc.new_page(width=page.rect.width, height=page.rect.height)
+                new_page.insert_image(new_page.rect, stream=img_data)
+            else:
+                # 直接複製頁面
+                final_doc.insert_pdf(compressed_doc, from_page=page_num, to_page=page_num)
+        
+        # 最終儲存
+        final_doc.save(output_path,
+                      garbage=4,        # 清理未使用物件
+                      deflate=True,     # 啟用deflate壓縮  
+                      clean=True,       # 清理和優化
+                      linear=True)      # 線性化PDF (網頁友善)
+        
+        final_doc.close()
+        compressed_doc.close()
+        
+        # 刪除臨時檔案
+        try:
+            os.remove(temp_output)
+        except:
+            pass
+            
+        print(f"✅ PDF壓縮完成")
     else:
         new_doc.save(output_path)
+        new_doc.close()
+    
+    doc.close()
         
     # 顯示檔案大小
     try:
@@ -153,9 +207,6 @@ def split_pdf_with_bleed_and_order(input_path, output_path, dpi=300):
             print(f"  增加: {abs(compression_ratio):.1f}%")
     except:
         pass
-    new_doc.close()
-    doc.close()
-
     print(f"\n✅ 完成! 輸出到: {output_path}")
     print(f"📊 結果: {len(order)} 張A4頁面")
 
