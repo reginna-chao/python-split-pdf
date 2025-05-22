@@ -14,8 +14,20 @@ def split_pdf_with_bleed_and_order(input_path, output_path, dpi=300):
     bleed_pt = mm_to_pt(bleed_mm)
     page_order_str = os.getenv("PAGE_ORDER", "")
     
+    # 壓縮設定
+    compress_images = os.getenv("COMPRESS_IMAGES", "true").lower() == "true"
+    image_quality = int(os.getenv("IMAGE_QUALITY", "85"))  # JPEG品質 0-100
+    compress_pdf = os.getenv("COMPRESS_PDF", "true").lower() == "true"
+    output_dpi = int(os.getenv("OUTPUT_DPI", str(dpi)))  # 輸出DPI，可以降低來壓縮
+    
     print(f"🔧 出血設定: {bleed_mm}mm ({bleed_pt:.1f}pt)")
     print(f"📋 頁面順序: {page_order_str}")
+    print(f"🗜️  圖片壓縮: {'開啟' if compress_images else '關閉'}")
+    if compress_images:
+        print(f"🎨 圖片品質: {image_quality}%")
+    print(f"📦 PDF壓縮: {'開啟' if compress_pdf else '關閉'}")
+    if output_dpi != dpi:
+        print(f"📐 輸出DPI: {output_dpi} (原始: {dpi})")
 
     doc = fitz.open(input_path)
     temp_pages = []
@@ -40,9 +52,18 @@ def split_pdf_with_bleed_and_order(input_path, output_path, dpi=300):
 
             clip = fitz.Rect(x0, y0, x1, y1)
             mat = fitz.Matrix(scale, scale)
-            pix = page.get_pixmap(matrix=mat, clip=clip, alpha=False)
-
-            temp_pages.append((clip.width, clip.height, pix))
+            
+            # 取得pixmap
+            if compress_images:
+                # 壓縮模式：使用較低DPI和JPEG壓縮
+                pix = page.get_pixmap(matrix=mat, clip=clip, alpha=False)
+                # 轉換為JPEG格式來壓縮
+                img_data = pix.tobytes("jpeg", jpg_quality=image_quality)
+                temp_pages.append((clip.width, clip.height, img_data, "jpeg"))
+            else:
+                # 原始模式：保持PNG格式
+                pix = page.get_pixmap(matrix=mat, clip=clip, alpha=False)
+                temp_pages.append((clip.width, clip.height, pix, "pixmap"))
             cut_page_num = len(temp_pages)
             
             print(f"  第{fold+1}折 → 切割頁面 {cut_page_num} (裁切出血: {bleed_mm}mm)")
@@ -78,7 +99,7 @@ def split_pdf_with_bleed_and_order(input_path, output_path, dpi=300):
             if any(i < 0 or i >= total_cut_pages for i in page_order):
                 print(f"❌ 錯誤: PAGE_ORDER 中有無效的頁面編號 (應該是1-{total_cut_pages})")
                 return
-            
+                
             order = page_order
         except ValueError:
             print("❌ PAGE_ORDER 格式錯誤，應該像這樣: 1,2,3,4,5,6")
@@ -92,15 +113,46 @@ def split_pdf_with_bleed_and_order(input_path, output_path, dpi=300):
     
     print(f"\n📄 組裝新PDF:")
     for new_pos, old_idx in enumerate(order):
-        width, height, pix = temp_pages[old_idx]
+        width, height, img_data, img_type = temp_pages[old_idx]
         
         # 建立新頁面，使用裁切後的尺寸
         page = new_doc.new_page(width=width, height=height)
-        page.insert_image(page.rect, pixmap=pix)
+        
+        if img_type == "jpeg":
+            # 插入JPEG圖片
+            page.insert_image(page.rect, stream=img_data)
+        else:
+            # 插入pixmap
+            page.insert_image(page.rect, pixmap=img_data)
         
         print(f"  第{new_pos+1}頁 ← 原切割頁面{old_idx+1}")
 
-    new_doc.save(output_path)
+    # 儲存PDF（帶壓縮選項）
+    if compress_pdf:
+        # 啟用所有壓縮選項
+        new_doc.save(output_path, 
+                    garbage=4,      # 清理未使用物件
+                    deflate=True,   # 啟用deflate壓縮
+                    clean=True)     # 清理和優化
+        print(f"📦 已套用PDF壓縮")
+    else:
+        new_doc.save(output_path)
+        
+    # 顯示檔案大小
+    try:
+        original_size = os.path.getsize(input_path)
+        output_size = os.path.getsize(output_path)
+        compression_ratio = (1 - output_size / original_size) * 100
+        
+        print(f"📊 檔案大小比較:")
+        print(f"  原始: {original_size / 1024 / 1024:.1f} MB")
+        print(f"  輸出: {output_size / 1024 / 1024:.1f} MB")
+        if compression_ratio > 0:
+            print(f"  壓縮: {compression_ratio:.1f}%")
+        else:
+            print(f"  增加: {abs(compression_ratio):.1f}%")
+    except:
+        pass
     new_doc.close()
     doc.close()
 
