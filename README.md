@@ -30,6 +30,22 @@ Please install the following packages first:
 pip install pymupdf python-dotenv
 ```
 
+## 📁 File structure
+
+```
+python-spllit-pdf/
+├── split_pdf.py
+├── .env
+├── input/           # Place PDFs to be processed here
+│   ├── file1.pdf
+│   ├── file2.pdf
+│   └── file3.pdf
+└── output/          # Automatically generated, stores processed results
+    ├── file1_processed.pdf
+    ├── file2_processed.pdf
+    └── file3_processed.pdf
+```
+
 ## 🚀 Usage
 
 1. Create a `.env` configuration file  
@@ -56,6 +72,14 @@ OUTPUT_DPI=150
 ```
 
 2. Run the command
+
+### Batch processing (recommended)
+
+```bash
+python split_pdf.py
+```
+
+### Single File Processing
 
 ```bash
 python split_pdf.py input.pdf output.pdf
